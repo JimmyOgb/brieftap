@@ -24,6 +24,8 @@ export class LiveTelegramService {
   // QR Auth State
   private currentQrStatus: QrAuthStatus = { status: 'unauthenticated' };
   private qrLoginPromise: Promise<any> | null = null;
+  private qrTokenWaiters: Array<(status: QrAuthStatus) => void> = [];
+  private isQrSigningIn = false;
 
   // VIP Configuration
   private config: VipConfig = {
@@ -175,57 +177,99 @@ export class LiveTelegramService {
       return this.currentQrStatus;
     }
 
-    this.currentQrStatus = { status: 'waiting_qr' };
+    // If we already have a valid unexpired QR token, return it immediately
+    const nowSec = Math.floor(Date.now() / 1000);
+    if (
+      this.isQrSigningIn &&
+      this.currentQrStatus.status === 'waiting_qr' &&
+      this.currentQrStatus.qrUrl &&
+      this.currentQrStatus.expiresIn &&
+      this.currentQrStatus.expiresIn > nowSec + 4
+    ) {
+      return this.currentQrStatus;
+    }
 
-    // Start background QR login loop
-    this.qrLoginPromise = client.signInUserWithQrCode(
-      { apiId: this.apiId, apiHash: this.apiHash },
-      {
-        qrCode: async (code) => {
-          const tokenBase64 = Buffer.from(code.token).toString('base64url');
-          const qrUrl = `tg://login?token=${tokenBase64}`;
+    // Create a promise to wait for the first or refreshed qrCode token from Telegram DC
+    const tokenPromise = new Promise<QrAuthStatus>((resolve) => {
+      const timer = setTimeout(() => {
+        resolve(this.currentQrStatus);
+      }, 7000);
+
+      this.qrTokenWaiters.push((status) => {
+        clearTimeout(timer);
+        resolve(status);
+      });
+    });
+
+    // If QR loop is not already running, initiate it
+    if (!this.isQrSigningIn) {
+      this.isQrSigningIn = true;
+      this.currentQrStatus = { status: 'waiting_qr' };
+
+      this.qrLoginPromise = client
+        .signInUserWithQrCode(
+          { apiId: this.apiId, apiHash: this.apiHash },
+          {
+            qrCode: async (code) => {
+              const tokenBase64 = Buffer.from(code.token).toString('base64url');
+              const qrUrl = `tg://login?token=${tokenBase64}`;
+              this.currentQrStatus = {
+                status: 'waiting_qr',
+                qrUrl,
+                expiresIn: code.expires,
+              };
+              console.log('[Telegram QR] Generated token, expires at:', new Date(code.expires * 1000).toLocaleTimeString());
+              const waiters = [...this.qrTokenWaiters];
+              this.qrTokenWaiters = [];
+              waiters.forEach((cb) => cb(this.currentQrStatus));
+            },
+            onError: (err: any) => {
+              console.error('[Telegram QR Error]', err);
+              this.currentQrStatus = {
+                status: 'error',
+                error: err.message || 'QR Login error',
+              };
+              const waiters = [...this.qrTokenWaiters];
+              this.qrTokenWaiters = [];
+              waiters.forEach((cb) => cb(this.currentQrStatus));
+            },
+          }
+        )
+        .then(async (user: any) => {
+          this.currentUser = user;
+          this.isConnected = true;
+          this.isQrSigningIn = false;
+          const savedSession = client.session.save() as unknown as string;
+          this.saveSessionString(savedSession);
           this.currentQrStatus = {
-            status: 'waiting_qr',
-            qrUrl,
-            expiresIn: code.expires,
+            status: 'authenticated',
+            user: {
+              id: user.id?.toString(),
+              username: user.username,
+              firstName: user.firstName,
+              lastName: user.lastName,
+              phone: user.phone,
+            },
           };
-          console.log('[Telegram QR] Generated token, expires at:', new Date(code.expires * 1000).toLocaleTimeString());
-        },
-        onError: (err: any) => {
-          console.error('[Telegram QR Error]', err);
+          console.log('[Telegram QR] Successfully signed in via QR code!');
+          const waiters = [...this.qrTokenWaiters];
+          this.qrTokenWaiters = [];
+          waiters.forEach((cb) => cb(this.currentQrStatus));
+        })
+        .catch((err: any) => {
+          console.error('[Telegram QR Failed]', err);
+          this.isQrSigningIn = false;
           this.currentQrStatus = {
             status: 'error',
-            error: err.message || 'QR Login error',
+            error: err.message || 'QR Login Failed',
           };
-        },
-      }
-    )
-      .then(async (user: any) => {
-        this.currentUser = user;
-        this.isConnected = true;
-        const savedSession = client.session.save() as unknown as string;
-        this.saveSessionString(savedSession);
-        this.currentQrStatus = {
-          status: 'authenticated',
-          user: {
-            id: user.id?.toString(),
-            username: user.username,
-            firstName: user.firstName,
-            lastName: user.lastName,
-            phone: user.phone,
-          },
-        };
-        console.log('[Telegram QR] Successfully signed in via QR code!');
-      })
-      .catch((err: any) => {
-        console.error('[Telegram QR Failed]', err);
-        this.currentQrStatus = {
-          status: 'error',
-          error: err.message || 'QR Login Failed',
-        };
-      });
+          const waiters = [...this.qrTokenWaiters];
+          this.qrTokenWaiters = [];
+          waiters.forEach((cb) => cb(this.currentQrStatus));
+        });
+    }
 
-    return this.currentQrStatus;
+    return await tokenPromise;
   }
 
   public getQrStatus(): QrAuthStatus {

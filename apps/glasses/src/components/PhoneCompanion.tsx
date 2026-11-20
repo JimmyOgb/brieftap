@@ -1,4 +1,4 @@
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, useRef } from 'react';
 import QRCode from 'qrcode';
 import { GlassesState, TelegramDialog } from '../types';
 import { glassesManager } from '../services/glassesManager';
@@ -18,6 +18,7 @@ import {
   Layers,
   ChevronRight,
   ExternalLink,
+  Copy,
 } from 'lucide-react';
 
 interface Props {
@@ -36,6 +37,11 @@ export const PhoneCompanion: React.FC<Props> = ({ state }) => {
   const [qrDataUrl, setQrDataUrl] = useState<string | null>(null);
   const [qrRawUrl, setQrRawUrl] = useState<string | null>(null);
   const [isQrLoading, setIsQrLoading] = useState(false);
+  const [qrError, setQrError] = useState<string | null>(null);
+  const [qrCountdown, setQrCountdown] = useState<number>(25);
+  const [copiedLink, setCopiedLink] = useState(false);
+  const qrRawUrlRef = useRef<string | null>(null);
+  qrRawUrlRef.current = qrRawUrl;
 
   // Phone Auth state
   const [phoneNumber, setPhoneNumber] = useState('');
@@ -52,6 +58,51 @@ export const PhoneCompanion: React.FC<Props> = ({ state }) => {
     const interval = setInterval(checkHealthAndLoad, 4000);
     return () => clearInterval(interval);
   }, []);
+
+  // Polling for QR approval and token countdown
+  useEffect(() => {
+    if (!qrRawUrl || health?.telegram?.connected) return;
+
+    // Poll status every 2.5 seconds
+    const statusInterval = setInterval(async () => {
+      try {
+        const status = await api.getQrAuthStatus();
+        if (status.status === 'authenticated') {
+          setQrRawUrl(null);
+          setQrDataUrl(null);
+          setQrError(null);
+          await checkHealthAndLoad();
+          await glassesManager.refreshData();
+        } else if (status.qrUrl && status.qrUrl !== qrRawUrlRef.current) {
+          setQrRawUrl(status.qrUrl);
+          const dataUrl = await QRCode.toDataURL(status.qrUrl, { margin: 2, scale: 6 });
+          setQrDataUrl(dataUrl);
+          setQrCountdown(25);
+          setQrError(null);
+        } else if (status.error) {
+          setQrError(status.error);
+        }
+      } catch (e: any) {
+        // network polling error handled gracefully
+      }
+    }, 2500);
+
+    // Countdown ticker (Telegram QR tokens expire every 30s)
+    const countdownTimer = setInterval(() => {
+      setQrCountdown((prev) => {
+        if (prev <= 1) {
+          handleStartQr(true); // silent refresh
+          return 25;
+        }
+        return prev - 1;
+      });
+    }, 1000);
+
+    return () => {
+      clearInterval(statusInterval);
+      clearInterval(countdownTimer);
+    };
+  }, [qrRawUrl, health?.telegram?.connected]);
 
   const checkHealthAndLoad = async () => {
     try {
@@ -71,20 +122,47 @@ export const PhoneCompanion: React.FC<Props> = ({ state }) => {
     }
   };
 
-  const handleStartQr = async () => {
-    setIsQrLoading(true);
-    setErrorMessage(null);
+  const handleStartQr = async (isSilent = false) => {
+    if (!isSilent) {
+      setIsQrLoading(true);
+      setQrError(null);
+    }
     try {
       const auth = await api.startQrAuth();
-      if (auth.qrUrl) {
-        setQrRawUrl(auth.qrUrl);
-        const dataUrl = await QRCode.toDataURL(auth.qrUrl, { margin: 2, scale: 6 });
+      if (auth.error) {
+        setQrError(auth.error);
+        return;
+      }
+      if (auth.status === 'authenticated') {
+        setQrRawUrl(null);
+        setQrDataUrl(null);
+        await checkHealthAndLoad();
+        await glassesManager.refreshData();
+        return;
+      }
+
+      let activeUrl = auth.qrUrl;
+      if (!activeUrl) {
+        // Quick fallback poll in case token arrived on next tick
+        const status = await api.getQrAuthStatus();
+        if (status.qrUrl) activeUrl = status.qrUrl;
+      }
+
+      if (activeUrl) {
+        setQrRawUrl(activeUrl);
+        const dataUrl = await QRCode.toDataURL(activeUrl, { margin: 2, scale: 6 });
         setQrDataUrl(dataUrl);
+        setQrCountdown(25);
+        setQrError(null);
+      } else {
+        setQrError('Could not obtain Telegram QR token from MTProto. Click Retry to request a fresh token.');
       }
     } catch (err: any) {
-      setErrorMessage(err.message || 'Failed to start Telegram QR pairing');
+      setQrError(err.message || 'Failed to start Telegram QR pairing');
     } finally {
-      setIsQrLoading(false);
+      if (!isSilent) {
+        setIsQrLoading(false);
+      }
     }
   };
 
@@ -339,24 +417,72 @@ export const PhoneCompanion: React.FC<Props> = ({ state }) => {
                     <h4>Method 1: Scan QR Code (Fastest)</h4>
                     <p className="subtext">Open Telegram on your phone &gt; Settings &gt; Devices &gt; Link Desktop Device</p>
 
-                    {qrDataUrl ? (
+                    {isQrLoading && (
+                      <div className="qr-loading-box">
+                        <RefreshCw className="icon-spin" size={16} />
+                        <span>Requesting live Telegram MTProto QR token...</span>
+                      </div>
+                    )}
+
+                    {qrError && (
+                      <div className="qr-error-box">
+                        <AlertTriangle size={16} />
+                        <span className="qr-error-msg">{qrError}</span>
+                        <button className="btn-retry-mini" onClick={() => handleStartQr(false)}>Retry</button>
+                      </div>
+                    )}
+
+                    {qrDataUrl && !isQrLoading ? (
                       <div className="qr-container">
-                        <img src={qrDataUrl} alt="Telegram QR Login" className="qr-image" />
-                        {qrRawUrl && (
-                          <a href={qrRawUrl} target="_blank" rel="noreferrer" className="qr-direct-link">
-                            Open in Telegram <ExternalLink size={12} />
-                          </a>
-                        )}
-                        <span className="qr-waiting-text">Waiting for approval on your Telegram app...</span>
+                        <div className="qr-wrapper">
+                          <img src={qrDataUrl} alt="Telegram QR Login" className="qr-image" />
+                          <div className="qr-timer-pill">
+                            <span className="dot-pulse"></span>
+                            Token active · Refreshes in {qrCountdown}s
+                          </div>
+                        </div>
+
+                        <div className="qr-actions-row">
+                          {qrRawUrl && (
+                            <a href={qrRawUrl} target="_blank" rel="noreferrer" className="btn-action-primary qr-open-btn">
+                              Open in Telegram <ExternalLink size={13} />
+                            </a>
+                          )}
+                          {qrRawUrl && (
+                            <button
+                              className="btn-action-secondary"
+                              onClick={() => {
+                                navigator.clipboard.writeText(qrRawUrl);
+                                setCopiedLink(true);
+                                setTimeout(() => setCopiedLink(false), 2000);
+                              }}
+                            >
+                              <Copy size={13} /> {copiedLink ? 'Copied!' : 'Copy tg:// Link'}
+                            </button>
+                          )}
+                          <button
+                            className="btn-refresh"
+                            onClick={() => handleStartQr(false)}
+                            disabled={isQrLoading}
+                          >
+                            <RefreshCw size={12} /> Refresh QR
+                          </button>
+                        </div>
+
+                        <span className="qr-waiting-text">
+                          Waiting for approval on your Telegram app... Point camera or open link.
+                        </span>
                       </div>
                     ) : (
-                      <button
-                        className="btn-action-primary"
-                        onClick={handleStartQr}
-                        disabled={isQrLoading}
-                      >
-                        {isQrLoading ? 'Generating QR...' : 'Generate Login QR Code'}
-                      </button>
+                      !isQrLoading && (
+                        <button
+                          className="btn-action-primary"
+                          onClick={() => handleStartQr(false)}
+                          disabled={isQrLoading}
+                        >
+                          <QrCode size={16} /> Generate Login QR Code
+                        </button>
+                      )
                     )}
                   </div>
 

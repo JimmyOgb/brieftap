@@ -12,6 +12,7 @@ build/
 .env
 .env.*
 !.env.example
+!apps/glasses/.env.production
 .env.local
 .env.*.local
 *.session

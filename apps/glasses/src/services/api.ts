@@ -1,6 +1,11 @@
 import { ActionCard, AlphaDigestItem, TelegramDialog, VoiceIntentResult } from '../types';
 
-const API_BASE = import.meta.env.VITE_API_URL || '';
+export const API_BASE =
+  import.meta.env.VITE_API_URL ||
+  (typeof window !== 'undefined' &&
+  (window.location.hostname === 'localhost' || window.location.hostname === '127.0.0.1')
+    ? 'http://localhost:3001'
+    : 'https://brieftap.onrender.com');
 
 export async function fetchHealth(): Promise<{
   status: string;
