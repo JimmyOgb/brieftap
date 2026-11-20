@@ -1,0 +1,37 @@
+# Dependencies
+node_modules/
+.pnp
+.pnp.js
+
+# Production builds
+dist/
+build/
+*.ehpk
+
+# Environment variables & secrets
+.env
+.env.*
+!.env.example
+.env.local
+.env.*.local
+*.session
+*.session-journal
+session.txt
+session.json
+vip_config.json
+
+# Screenshots & temporary test artifacts
+*.png
+sim_*.log
+
+# Logs
+npm-debug.log*
+yarn-debug.log*
+yarn-error.log*
+*.log
+
+# Editor & OS files
+.vscode/
+.idea/
+.DS_Store
+Thumbs.db
