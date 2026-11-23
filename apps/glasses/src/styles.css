@@ -673,6 +673,21 @@ body {
   color: #76FF03;
 }
 
+.hud-menu-item {
+  font-weight: 600;
+  color: #64B5F6;
+  border-left: 2px solid #64B5F6;
+}
+
+.btn-touchpad-mode {
+  border-color: #64B5F6 !important;
+  color: #64B5F6 !important;
+}
+
+.btn-touchpad-mode:hover {
+  background: rgba(100, 181, 246, 0.15) !important;
+}
+
 /* Voice capture screen */
 .hud-voice-box {
   padding: 14px;

@@ -42,15 +42,26 @@ export class LiveTelegramService {
     this.apiId = parseInt(process.env.TELEGRAM_API_ID || '0', 10);
     this.apiHash = process.env.TELEGRAM_API_HASH || '';
 
-    // Load session string from file or env
+    // 1. Load session string from session.txt if it exists and has content
     if (fs.existsSync(SESSION_FILE_PATH)) {
       try {
-        this.sessionString = fs.readFileSync(SESSION_FILE_PATH, 'utf-8').trim();
+        const fileSession = fs.readFileSync(SESSION_FILE_PATH, 'utf-8').trim();
+        if (fileSession) {
+          this.sessionString = fileSession;
+          console.log('[Telegram] Loaded MTProto session from session.txt');
+        }
       } catch (err) {
         console.warn('[Telegram] Could not read session.txt:', err);
       }
-    } else if (process.env.TELEGRAM_SESSION) {
-      this.sessionString = process.env.TELEGRAM_SESSION.trim();
+    }
+
+    // 2. Optional TELEGRAM_SESSION environment variable fallback for Render restarts/redeploys
+    if (!this.sessionString && process.env.TELEGRAM_SESSION) {
+      const envSession = process.env.TELEGRAM_SESSION.trim();
+      if (envSession) {
+        this.sessionString = envSession;
+        console.log('[Telegram] Loaded MTProto session from TELEGRAM_SESSION environment variable fallback');
+      }
     }
   }
 

@@ -74,10 +74,17 @@ export const GlassesVirtualPreview: React.FC<Props> = ({ state }) => {
                   ))}
                   <div
                     className="hud-list-item hud-mic-item"
-                    onClick={() => glassesManager.triggerListItem(3)}
+                    onClick={() => glassesManager.triggerListItem(currentCard.smartReplies.length)}
                     title="Click to simulate tap on Mic intent"
                   >
                     &gt; [Mic] Speak intent...
+                  </div>
+                  <div
+                    className="hud-list-item hud-menu-item"
+                    onClick={() => glassesManager.triggerListItem(currentCard.smartReplies.length + 1)}
+                    title="Click to switch to Channel Alpha Digest via contextual menu"
+                  >
+                    &gt; [Menu] Alpha Digest...
                   </div>
                 </div>
               </>
@@ -161,6 +168,19 @@ export const GlassesVirtualPreview: React.FC<Props> = ({ state }) => {
           title="Fires sysEvent DOUBLE_CLICK_EVENT (eventType: 3)"
         >
           Double Tap (Skip / Back / Refresh)
+        </button>
+        <button
+          className="btn-touchpad btn-touchpad-mode"
+          onClick={() => {
+            if (state.currentView === 'DIGEST') {
+              glassesManager.setView(state.cards.length > 0 ? 'QUEUE' : 'EMPTY');
+            } else {
+              glassesManager.loadDigestView();
+            }
+          }}
+          title="Toggle between Action Queue and Alpha Digest"
+        >
+          {state.currentView === 'DIGEST' ? '⇄ Back to Queue' : '⇄ Open Alpha Digest'}
         </button>
       </div>
     </div>

@@ -9,6 +9,35 @@
 
 ---
 
+## 📋 Pre-Nov 23 Disclosure
+
+In full compliance with the DoraHacks Even Realities Global Hackathon guidelines, the pre-hackathon baseline and build-week contributions are disclosed below:
+
+- **What existed before Nov 23, 2026**:
+  - Initial monorepo scaffold (`apps/glasses` + `apps/server`) and Turborepo/npm workspace configuration.
+  - Basic Render (`render.yaml`) and Vercel deployment configurations.
+  - Initial GramJS MTProto client boilerplate and Groq Whisper/Llama API client integration skeleton prepared on Nov 20, 2026.
+- **What was built during Hackathon Build Week (Nov 23–29, 2026)**:
+  - **G2 HUD UX Refinements**: Firmware-compliant 576 × 288 optical layouts with zero layout clipping, native LVGL list container integration, contextual menu switching between Action Queue and Alpha Digest, and optical greyscale styling.
+  - **2FA & Session Resilience**: Full Telegram 2FA SRP verification, QR token polling, and `TELEGRAM_SESSION` environment variable fallback for zero-downtime Render server redeploys and restarts.
+  - **Privacy & Safety Guardrails**: Strict local VIP chat filtering (maximum 5 chats), Channel Alpha Digest isolation (maximum 5 channels), zero third-party cloud data persistence, zero financial advice disclaimer, and instant session revocation via Telegram Device settings.
+  - **Simulator & Hardware Verification**: Complete desktop simulator automation testing (`evenhub-simulator`), Bluetooth LE audio packet stream verification, and end-to-end 1-Tap Write flow validation.
+  - **Package & Distribution**: Official Even Hub `.ehpk` production packaging (`com.brieftap.app`), production Vercel companion app deployment, and live demonstration recording.
+
+---
+
+## 🔒 Privacy & Safety
+
+BriefTap is engineered from the ground up to respect user privacy and adhere to the highest wearable safety standards:
+
+- **Strict User Consent & VIP Filtering**: BriefTap never scrapes all messages or reads background channels arbitrarily. It only accesses the user's explicitly selected VIP chats (max 5) and Digest channels (max 5), configured on the companion app.
+- **Zero Third-Party Data Persistence**: No messages, chats, voice recordings, or transcripts are stored in any database. Audio captured from the G2 4-microphone array is streamed in memory directly to Groq Whisper for transcription and immediately released from RAM.
+- **No Financial Advice & No Fund Management**: BriefTap does not manage, store, transfer, or interact with cryptocurrency or fiat funds. Summaries generated from Telegram alpha channels are purely informational and do not constitute financial advice.
+- **Zero Secret Leakage**: API credentials, MTProto string sessions, and environment files (`.env`, `session.txt`, `vip_config.json`, `*.session`) are strictly git-ignored and never committed to version control.
+- **Instant Revocation via Telegram Official Client**: BriefTap authenticates as an official Telegram MTProto user session. Users can instantly terminate BriefTap's access at any time directly from the native Telegram app by navigating to **Telegram → Settings → Devices → Terminate Session**.
+
+---
+
 ## 💡 The Problem & The Solution
 
 ### The Problem: Notification Fatigue on Wearables
@@ -70,7 +99,7 @@ Strictly compliant with Even Realities `glasses-ui`, `design-guidelines`, and `f
 
 | Screen | Layout & Containers | Hardware Touchpad Gestures (`handle-input`) |
 |---|---|---|
-| **1. Action Queue Card** *(Default)* | • **Header (Text, 576×34)**: `FROM: <Sender> (<Chat>) · <Time> [1/N]`<br>• **Summary (Text, 576×72)**: 1–2 crisp decision lines<br>• **Replies (List, 576×174, `isEventCapture: 1`)**: 3 AI smart replies + `[Mic] Speak intent...` | • **Swipe Up / Down**: Native selection cursor<br>• **Single Tap**: 1-Tap Write (sends live reply immediately)<br>• **Double Tap**: Dismiss/skip to next card |
+| **1. Action Queue Card** *(Default)* | • **Header (Text, 576×34)**: `FROM: <Sender> (<Chat>) · <Time> [1/N]`<br>• **Summary (Text, 576×72)**: 1–2 crisp decision lines<br>• **Replies (List, 576×174, `isEventCapture: 1`)**: 3 AI smart replies + `[Mic] Speak intent...` + `[Menu] Alpha Digest...` | • **Swipe Up / Down**: Native selection cursor<br>• **Single Tap**: 1-Tap Write (sends live reply immediately) or opens selected action<br>• **Double Tap**: Dismiss/skip to next card |
 | **2. Voice Intent Capture** | • **Header (Text, 576×36)**: `VOICE INTENT · G2 4-MIC ARRAY`<br>• **Body (Text, 576×244, `isEventCapture: 1`)**: `● RECORDING (16 kHz PCM)...` | • **G2 Mic**: `audioControl(true, AudioInputSource.Glasses)`<br>• **Single Tap**: Stop recording & polish with Groq AI<br>• **Double Tap**: Cancel back to card |
 | **3. Voice Reply Confirm** | • **Header (Text, 576×34)**: `CONFIRM REPLY TO <RECIPIENT>`<br>• **Preview (Text, 576×144)**: Spoken transcription vs AI-polished reply<br>• **Controls (Text, 576×96, `isEventCapture: 1`)**: Send / Discard | • **Single Tap**: Send live to Telegram<br>• **Double Tap**: Discard & return to queue |
 | **4. Channel Alpha Digest** | • **Header (Text, 576×34)**: `ALPHA DIGEST · <CHANNELS>`<br>• **Body (Text, 576×246, `isEventCapture: 1`)**: 3 real channel bullets | • **Single Tap**: Save bullet to Telegram "Saved Messages"<br>• **Double Tap**: Return to Action Queue |
@@ -144,6 +173,7 @@ The repository includes a ready-to-deploy [`render.yaml`](./render.yaml) Bluepri
    - `TELEGRAM_API_HASH`: Your MTProto API Hash
    - `GROQ_API_KEY`: Your Groq API key
    - `CORS_ORIGIN`: `https://brieftap.vercel.app`
+   - `TELEGRAM_SESSION`: (Optional) Your MTProto StringSession to automatically restore authenticated session on Render redeploys and restarts without re-scanning QR.
 4. Click **Apply**. Render will build and expose `https://brieftap.onrender.com`.
 
 ### 2. Frontend (`apps/glasses`) on Vercel

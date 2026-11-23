@@ -350,10 +350,11 @@ class LiveGlassesManager {
       content: card.summary,
     });
 
-    // List container: 576 x 174 (3 smart replies + 1 mic action)
+    // List container: 576 x 174 (3 smart replies + 1 mic action + 1 contextual menu action)
     const listItems = [
       ...card.smartReplies.map((reply) => `> ${reply}`),
       '> [Mic] Speak intent...',
+      '> [Menu] Alpha Digest...',
     ];
 
     const itemProps = new ListItemContainerProperty({
@@ -660,12 +661,22 @@ class LiveGlassesManager {
     if (total === 0) return;
 
     const card = this.state.cards[this.state.currentCardIndex % total];
+    const numSmartReplies = card.smartReplies.length;
 
-    if (index === 3) {
+    if (index === numSmartReplies) {
       // "[Mic] Speak intent..." selected
       this.state.currentView = 'VOICE_CAPTURE';
+      this.state.statusMessage = 'Voice Intent · Listening on G2 4-mic array...';
       this.notify();
       await this.renderCurrentView();
+      return;
+    }
+
+    if (index === numSmartReplies + 1) {
+      // "[Menu] Alpha Digest..." selected via contextual menu
+      this.state.statusMessage = 'Opening Channel Alpha Digest...';
+      this.notify();
+      await this.loadDigestView();
       return;
     }
 
@@ -686,6 +697,7 @@ class LiveGlassesManager {
         this.state.statusMessage = 'All caught up · 0 unread VIPs';
       } else {
         this.state.currentCardIndex = this.state.currentCardIndex % this.state.cards.length;
+        this.state.statusMessage = `Active · ${this.state.cards.length} unread VIP message(s)`;
       }
       this.notify();
       await this.renderCurrentView();
@@ -826,6 +838,9 @@ class LiveGlassesManager {
 
       case 'DIGEST':
         this.state.currentView = this.state.cards.length > 0 ? 'QUEUE' : 'EMPTY';
+        this.state.statusMessage = this.state.cards.length > 0
+          ? `Action Queue · ${this.state.cards.length} unread VIP message(s)`
+          : 'All caught up · 0 unread VIPs';
         this.notify();
         await this.renderCurrentView();
         break;
@@ -834,25 +849,38 @@ class LiveGlassesManager {
 
   public async loadDigestView() {
     try {
-      this.state.statusMessage = 'Fetching channel digest from Telegram...';
+      this.state.statusMessage = 'Fetching Channel Alpha Digest from Telegram...';
       this.notify();
       const digest = await api.fetchDigest();
       this.state.digest = digest;
       this.state.currentView = 'DIGEST';
+      this.state.statusMessage = `Alpha Digest · ${digest.channelTitle} (${digest.bullets?.length || 0} bullets)`;
       this.notify();
       await this.renderCurrentView();
     } catch (err: any) {
       this.state.errorMessage = err.message || 'Failed to load channel digest';
       this.state.currentView = 'ERROR';
+      this.state.statusMessage = 'Error loading Alpha Digest';
       this.notify();
       await this.renderCurrentView();
     }
   }
 
-  public setView(view: GlassesViewMode) {
+  public async setView(view: GlassesViewMode) {
+    if (view === 'DIGEST' && !this.state.digest) {
+      await this.loadDigestView();
+      return;
+    }
     this.state.currentView = view;
+    if (view === 'QUEUE') {
+      this.state.statusMessage = this.state.cards.length > 0
+        ? `Action Queue · ${this.state.cards.length} unread VIP message(s)`
+        : 'All caught up · 0 unread VIPs';
+    } else if (view === 'DIGEST') {
+      this.state.statusMessage = `Alpha Digest · ${this.state.digest?.channelTitle || 'Channels'}`;
+    }
     this.notify();
-    this.renderCurrentView();
+    await this.renderCurrentView();
   }
 
   public triggerListItem(index: number) {
