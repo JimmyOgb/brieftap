@@ -112,19 +112,24 @@ export class LiveTelegramService {
       await this.client.connect();
 
       if (await this.client.checkAuthorization()) {
-        this.currentUser = await this.client.getMe();
-        this.isConnected = true;
-        this.currentQrStatus = {
-          status: 'authenticated',
-          user: {
-            id: this.currentUser.id?.toString(),
-            username: this.currentUser.username,
-            firstName: this.currentUser.firstName,
-            lastName: this.currentUser.lastName,
-            phone: this.currentUser.phone,
-          },
-        };
-        console.log(`[Telegram] Successfully connected MTProto as @${this.currentUser.username || this.currentUser.firstName} (${this.currentUser.id})`);
+        try {
+          this.currentUser = await this.client.getMe();
+          this.isConnected = true;
+          this.currentQrStatus = {
+            status: 'authenticated',
+            user: {
+              id: this.currentUser.id?.toString(),
+              username: this.currentUser.username,
+              firstName: this.currentUser.firstName,
+              lastName: this.currentUser.lastName,
+              phone: this.currentUser.phone,
+            },
+          };
+          console.log(`[Telegram] Successfully connected MTProto as @${this.currentUser.username || this.currentUser.firstName} (${this.currentUser.id})`);
+        } catch (authErr: any) {
+          console.warn('[Telegram] checkAuthorization passed but getMe failed:', authErr.message);
+          this.handleAuthRevoked(authErr.message);
+        }
       } else {
         this.isConnected = false;
         this.currentQrStatus = { status: 'unauthenticated' };
@@ -147,6 +152,13 @@ export class LiveTelegramService {
       });
     }
     return this.client;
+  }
+
+  public handleAuthRevoked(reason?: string) {
+    this.isConnected = false;
+    this.currentUser = null;
+    this.currentQrStatus = { status: 'unauthenticated', error: reason };
+    console.warn(`[Telegram] Session revoked or invalid (${reason || 'unauthorized'}). Cleared connection state.`);
   }
 
   public getStatus() {
@@ -352,27 +364,48 @@ export class LiveTelegramService {
    */
   public async getDialogs(): Promise<TelegramDialog[]> {
     if (!this.isConnected || !this.client) {
-      throw new Error('Telegram is not connected. Authenticate first.');
+      return [];
     }
 
-    const dialogs = await this.client.getDialogs({ limit: 50 });
-    return dialogs.map((d: any) => {
-      const id = d.id?.toString() || '';
-      const isUser = Boolean(d.isUser);
-      const isChannel = Boolean(d.isChannel);
-      const type = isUser ? 'user' : isChannel ? 'channel' : 'group';
+    try {
+      const dialogs = await this.client.getDialogs({ limit: 50 });
+      return dialogs.map((d: any) => {
+        // Guard against undefined entity and ensure all BigInt / BigInteger are explicitly converted to string
+        const rawId = d.id !== undefined && d.id !== null ? d.id : d.entity?.id;
+        const id = rawId !== undefined && rawId !== null ? rawId.toString() : '';
+        const isUser = Boolean(d.isUser || (d.entity && d.entity.className === 'User'));
+        const isChannel = Boolean(d.isChannel || (d.entity && d.entity.className === 'Channel'));
+        const type: 'user' | 'channel' | 'group' = isUser ? 'user' : isChannel ? 'channel' : 'group';
+        const title = d.title || d.name || d.entity?.title || d.entity?.firstName || 'Telegram Contact';
 
-      return {
-        id,
-        title: d.title || d.name || 'Telegram Contact',
-        type,
-        unreadCount: d.unreadCount || 0,
-        isVip: this.config.vipChatIds.includes(id),
-        isDigest: this.config.digestChannelIds.includes(id),
-        lastMessage: d.message?.message || '',
-        date: d.date,
-      };
-    });
+        const lastMessage = d.message?.message ? String(d.message.message) : '';
+        const unreadCount = typeof d.unreadCount === 'number' ? d.unreadCount : (Number(d.unreadCount) || 0);
+        const date = typeof d.date === 'number' ? d.date : (d.date ? Number(d.date) : undefined);
+
+        return {
+          id: String(id),
+          title: String(title),
+          type,
+          unreadCount,
+          isVip: this.config.vipChatIds.includes(String(id)),
+          isDigest: this.config.digestChannelIds.includes(String(id)),
+          lastMessage,
+          date,
+        };
+      });
+    } catch (err: any) {
+      const errMsg = err?.message || 'Error fetching Telegram dialogs';
+      console.error('[Telegram] getDialogs error:', errMsg);
+      if (
+        errMsg.includes('AUTH_KEY_UNREGISTERED') ||
+        errMsg.includes('SESSION_REVOKED') ||
+        errMsg.includes('SESSION_EXPIRED') ||
+        errMsg.includes('401')
+      ) {
+        this.handleAuthRevoked(errMsg);
+      }
+      throw err;
+    }
   }
 
   public updateVipConfig(vipChatIds: string[], digestChannelIds: string[]): VipConfig {
@@ -391,7 +424,7 @@ export class LiveTelegramService {
    */
   public async getActionQueue(): Promise<ActionCard[]> {
     if (!this.isConnected || !this.client) {
-      throw new Error('Telegram is not connected. Open the phone companion to pair Telegram.');
+      return [];
     }
 
     if (this.config.vipChatIds.length === 0) {
@@ -403,7 +436,7 @@ export class LiveTelegramService {
     for (const chatId of this.config.vipChatIds) {
       try {
         const dialogs = await this.client.getDialogs({ limit: 50 });
-        const targetDialog = dialogs.find((d: any) => d.id?.toString() === chatId);
+        const targetDialog = dialogs.find((d: any) => (d.id?.toString() || d.entity?.id?.toString()) === chatId);
 
         if (!targetDialog || targetDialog.unreadCount === 0) {
           continue;
@@ -421,7 +454,7 @@ export class LiveTelegramService {
 
         const senderEntity: any = incoming.sender;
         const senderName = senderEntity?.firstName || senderEntity?.title || targetDialog.title || 'Telegram User';
-        const rawText = incoming.message;
+        const rawText = incoming.message ? String(incoming.message) : '';
         const timestamp = new Date((incoming.date || Date.now() / 1000) * 1000).toLocaleTimeString([], {
           hour: '2-digit',
           minute: '2-digit',
@@ -432,20 +465,30 @@ export class LiveTelegramService {
         // Live triage via Groq Llama 3.1
         const triage = await aiService.triageMessage(senderName, chatTitle, rawText);
 
+        const msgId = incoming.id !== undefined && incoming.id !== null ? Number(incoming.id.toString()) : Date.now();
+
         cards.push({
-          id: `card-${incoming.id}`,
-          sender: senderName,
-          chatTitle,
-          chatId,
-          replyToMsgId: incoming.id,
+          id: `card-${incoming.id?.toString() || Date.now()}`,
+          sender: String(senderName),
+          chatTitle: String(chatTitle),
+          chatId: String(chatId),
+          replyToMsgId: msgId,
           timestamp,
           summary: triage.summary || rawText.slice(0, 80),
           smartReplies: triage.smartReplies || [],
           rawText,
           unreadCount: targetDialog.unreadCount || 1,
         });
-      } catch (err) {
-        console.error(`[Telegram] Error fetching queue for chat ${chatId}:`, err);
+      } catch (err: any) {
+        console.error(`[Telegram] Error fetching queue for chat ${chatId}:`, err?.message || err);
+        if (
+          err?.message?.includes('AUTH_KEY_UNREGISTERED') ||
+          err?.message?.includes('SESSION_REVOKED') ||
+          err?.message?.includes('401')
+        ) {
+          this.handleAuthRevoked(err.message);
+          break;
+        }
       }
     }
 

@@ -93,10 +93,30 @@ apiRouter.post('/api/auth/phone/verify', async (req: Request, res: Response) => 
  */
 apiRouter.get('/api/chats', async (req: Request, res: Response) => {
   try {
+    if (!telegramService.isConnected) {
+      res.json({ connected: false, chats: [] });
+      return;
+    }
     const chats = await telegramService.getDialogs();
-    res.json({ chats });
+    res.json({ connected: true, chats });
   } catch (err: any) {
-    res.status(err.message.includes('not connected') ? 401 : 500).json({ error: err.message });
+    const errorMsg = err?.message || 'Failed to fetch dialogs';
+    console.error('[API /api/chats error]:', errorMsg);
+
+    // If unauthorized or connection lost, report connected: false and 200 instead of opaque 500
+    if (
+      errorMsg.includes('AUTH_KEY_UNREGISTERED') ||
+      errorMsg.includes('SESSION_REVOKED') ||
+      errorMsg.includes('SESSION_EXPIRED') ||
+      errorMsg.includes('not connected') ||
+      errorMsg.includes('401')
+    ) {
+      telegramService.handleAuthRevoked(errorMsg);
+      res.json({ connected: false, chats: [], error: errorMsg });
+      return;
+    }
+
+    res.status(500).json({ connected: false, chats: [], error: errorMsg });
   }
 });
 
@@ -119,10 +139,29 @@ apiRouter.post('/api/vip/configure', (req: Request, res: Response) => {
  */
 apiRouter.get('/api/queue', async (req: Request, res: Response) => {
   try {
+    if (!telegramService.isConnected) {
+      res.json({ connected: false, queue: [] });
+      return;
+    }
     const queue = await telegramService.getActionQueue();
-    res.json({ queue });
+    res.json({ connected: true, queue });
   } catch (err: any) {
-    res.status(err.message.includes('not connected') ? 401 : 500).json({ error: err.message });
+    const errorMsg = err?.message || 'Failed to fetch queue';
+    console.error('[API /api/queue error]:', errorMsg);
+
+    if (
+      errorMsg.includes('AUTH_KEY_UNREGISTERED') ||
+      errorMsg.includes('SESSION_REVOKED') ||
+      errorMsg.includes('SESSION_EXPIRED') ||
+      errorMsg.includes('not connected') ||
+      errorMsg.includes('401')
+    ) {
+      telegramService.handleAuthRevoked(errorMsg);
+      res.json({ connected: false, queue: [], error: errorMsg });
+      return;
+    }
+
+    res.status(500).json({ connected: false, queue: [], error: errorMsg });
   }
 });
 

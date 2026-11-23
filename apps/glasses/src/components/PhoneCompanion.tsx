@@ -53,10 +53,64 @@ export const PhoneCompanion: React.FC<Props> = ({ state }) => {
   // Active view tab: 'chats' | 'digest' | 'auth'
   const [activeTab, setActiveTab] = useState<'vip' | 'digest' | 'auth'>('vip');
 
+  const consecutiveFailuresRef = useRef<number>(0);
+  const isFetchingRef = useRef<boolean>(false);
+
+  const checkHealthAndLoad = async () => {
+    if (isFetchingRef.current) return;
+    isFetchingRef.current = true;
+    try {
+      const h = await api.fetchHealth();
+      setHealth(h);
+
+      if (h.telegram?.connected) {
+        try {
+          const [dialogs, config] = await Promise.all([api.fetchChats(), api.fetchVipConfig()]);
+          setChats(dialogs);
+          setSelectedVipIds(config.vipChatIds || []);
+          setSelectedDigestIds(config.digestChannelIds || []);
+          setErrorMessage(null);
+          consecutiveFailuresRef.current = 0;
+        } catch (chatErr: any) {
+          console.warn('[PhoneCompanion] Error loading chats:', chatErr.message);
+          consecutiveFailuresRef.current += 1;
+        }
+      } else {
+        // When not connected, never poll or keep stale chats
+        setChats([]);
+        setErrorMessage(null);
+        consecutiveFailuresRef.current = 0;
+      }
+    } catch (err: any) {
+      console.warn('[PhoneCompanion] Health check error:', err.message);
+      consecutiveFailuresRef.current += 1;
+    } finally {
+      isFetchingRef.current = false;
+    }
+  };
+
   useEffect(() => {
-    checkHealthAndLoad();
-    const interval = setInterval(checkHealthAndLoad, 4000);
-    return () => clearInterval(interval);
+    let timeoutId: any;
+    let isMounted = true;
+
+    const runPollLoop = async () => {
+      await checkHealthAndLoad();
+      if (!isMounted) return;
+
+      // Backoff on consecutive failures: 4s default, scaling up to 20s
+      const delay = consecutiveFailuresRef.current > 0
+        ? Math.min(4000 * Math.pow(1.5, consecutiveFailuresRef.current), 20000)
+        : 4000;
+
+      timeoutId = setTimeout(runPollLoop, delay);
+    };
+
+    runPollLoop();
+
+    return () => {
+      isMounted = false;
+      if (timeoutId) clearTimeout(timeoutId);
+    };
   }, []);
 
   // Polling for QR approval and token countdown
@@ -103,24 +157,6 @@ export const PhoneCompanion: React.FC<Props> = ({ state }) => {
       clearInterval(countdownTimer);
     };
   }, [qrRawUrl, health?.telegram?.connected]);
-
-  const checkHealthAndLoad = async () => {
-    try {
-      const h = await api.fetchHealth();
-      setHealth(h);
-
-      if (h.telegram?.connected) {
-        // Load live chats and VIP config
-        const [dialogs, config] = await Promise.all([api.fetchChats(), api.fetchVipConfig()]);
-        setChats(dialogs);
-        setSelectedVipIds(config.vipChatIds || []);
-        setSelectedDigestIds(config.digestChannelIds || []);
-        setErrorMessage(null);
-      }
-    } catch (err: any) {
-      setErrorMessage(err.message || 'Server connection error');
-    }
-  };
 
   const handleStartQr = async (isSilent = false) => {
     if (!isSilent) {
